@@ -1,0 +1,12 @@
+[client]
+toolbarPosition = "bottom"
+
+[logger]
+level = "info"
+
+[theme]
+primaryColor = "#1f77b4"
+
+[server]
+runOnSave = true
+maxUploadSize = 200
