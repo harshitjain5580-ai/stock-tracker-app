@@ -20,15 +20,31 @@ WATCHLIST_FILE = "watchlist.json"
 
 # ===================== EMAIL / OTP HELPERS =====================
 
-EMAIL_CONF = st.secrets["email"]
-EMAIL_USER = EMAIL_CONF["user"]
-EMAIL_PASSWORD = EMAIL_CONF["password"]
-SMTP_SERVER = EMAIL_CONF.get("smtp_server", "smtp.gmail.com")
-SMTP_PORT = int(EMAIL_CONF.get("smtp_port", 465))
+# Try to load email configuration with fallback
+EMAIL_CONF = None
+EMAIL_USER = None
+EMAIL_PASSWORD = None
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+
+try:
+    EMAIL_CONF = st.secrets["email"]
+    EMAIL_USER = EMAIL_CONF.get("user")
+    EMAIL_PASSWORD = EMAIL_CONF.get("password")
+    SMTP_SERVER = EMAIL_CONF.get("smtp_server", "smtp.gmail.com")
+    SMTP_PORT = int(EMAIL_CONF.get("smtp_port", 587))
+    # Check if credentials are placeholder/invalid
+    if EMAIL_USER and "your-" in EMAIL_USER.lower():
+        EMAIL_CONF = None
+except:
+    # Secrets not configured - we'll handle this gracefully
+    passsmtp_port", 465))
 
 
 def send_otp_email(to_email: str, otp: str):
     """Send OTP code to the user's email."""
+        if not EMAIL_CONF or not EMAIL_USER or not EMAIL_PASSWORD:
+        return False, "Email configuration not set up. Please configure email credentials in Streamlit Secrets."
     subject = "Your OTP for Global Stock Tracker"
     body = f"Your one-time password (OTP) is: {otp}\n\nIt is valid for 5 minutes."
 
