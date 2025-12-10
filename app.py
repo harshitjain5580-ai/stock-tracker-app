@@ -455,36 +455,40 @@ def main_app():
 
 # ===================== ENTRY POINT =====================
 
-init_auth_state()
-show_logout_button()
-
-
-# Show setup message if email credentials are not configured
-if EMAIL_CONF is None:
-    st.error("⚠️ Email configuration not found!")
-    st.info("""
-    ### Setup Required
-    This app requires Gmail email configuration to send OTP codes for login.
+try:
+    init_auth_state()
+    show_logout_button()
     
-    **Steps to configure:**
-    1. Go to your app's **Settings → Secrets**
-    2. Add the following TOML configuration:
     
-    ```toml
-    [email]
-    email = "your-email@gmail.com"
-    user = "your-email@gmail.com"
-    password = "your-app-password"
-    smtp_server = "smtp.gmail.com"
-    smtp_port = 587
-    ```
-    
-    3. Replace with your actual Gmail address and **Gmail App Password** (not regular password)
-    4. Get your App Password from: [Google Account Settings](https://myaccount.google.com/apppasswords)
-    5. Click Save and the app will auto-refresh
-    """)
-else:
-    if not st.session_state.authenticated:
-        show_auth_ui()
+    # Show setup message if email credentials are not configured
+    if EMAIL_CONF is None:
+        st.error("⚠️ Email configuration not found!")
+        st.info("""
+        ### Setup Required
+        This app requires Gmail email configuration to send OTP codes for login.
+        
+        **Steps to configure:**
+        1. Go to your app's **Settings → Secrets**
+        2. Add the following TOML configuration:
+        
+        ```toml
+        [email]
+        email = "your-email@gmail.com"
+        user = "your-email@gmail.com"
+        password = "your-app-password"
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 587
+        ```
+        
+        3. Replace with your actual Gmail address and **Gmail App Password** (not regular password)
+        4. Get your App Password from: [Google Account Settings](https://myaccount.google.com/apppasswords)
+        5. Click Save and the app will auto-refresh
+        """)
     else:
-        main_app()
+        if not st.session_state.authenticated:
+            show_auth_ui()
+        else:
+            main_app()
+            except Exception as e:
+                st.error(f"❌ App Error: {str(e)}")
+                st.info(f"Please contact support with this error: {type(e).__name__}: {str(e)}")
