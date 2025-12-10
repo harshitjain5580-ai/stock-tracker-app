@@ -37,6 +37,7 @@ try:
     if EMAIL_USER and "your-" in EMAIL_USER.lower():
         EMAIL_CONF = None
 except:
+        pass
     # Secrets not configured - we'll handle this gracefully
     
 
