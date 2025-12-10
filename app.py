@@ -38,8 +38,7 @@ try:
         EMAIL_CONF = None
 except:
     # Secrets not configured - we'll handle this gracefully
-    passsmtp_port", 465))
-
+    
 
 def send_otp_email(to_email: str, otp: str):
     """Send OTP code to the user's email."""
