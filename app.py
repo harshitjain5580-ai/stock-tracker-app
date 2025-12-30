@@ -44,13 +44,13 @@ def send_otp_email(to_email: str, otp: str):
     """Send OTP code to the user's email."""
     if not EMAIL_CONF or not EMAIL_USER or not EMAIL_PASSWORD:
     return False, "Email configuration not set up. Please configure email credentials in Streamlit Secrets."
-subject = "Your OTP for Global Stock Tracker"
-    body = f"Your one-time password (OTP) is: {otp}\n\nIt is valid for 5 minutes."
+    subject = "Your OTP for Global Stock Tracker"
+        body = f"Your one-time password (OTP) is: {otp}\n\nIt is valid for 5 minutes."
 
-        msg = MIMEText(body)
-        msg["Subject"] = subject
-        msg["From"] = EMAIL_USER
-        msg["To"] = to_email
+                msg = MIMEText(body)
+            msg["Subject"] = subject
+            msg["From"] = EMAIL_USER
+            msg["To"] = to_email
 
     try:
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
