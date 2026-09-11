@@ -99,7 +99,4 @@ Makefile                  Common development commands
 | `make check` | Compile-check the application |
 | `make clean` | Remove Python cache files |
 
-## License
 
-No license has been declared for this repository yet. Contact the repository
-owner before redistributing or using the code in another project.
