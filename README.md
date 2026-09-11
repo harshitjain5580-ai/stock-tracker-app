@@ -11,6 +11,7 @@ and optional email OTP authentication.
 - Compare the current price with 20-day and 50-day moving averages.
 - Maintain a local watchlist.
 - Sign in with a one-time password sent through a configured SMTP account.
+- Limit OTP requests and store OTPs as hashes in session memory.
 
 > This project is for education and market research only. It is not financial
 > advice, and the data supplied by Yahoo Finance may be delayed or unavailable.
@@ -98,6 +99,7 @@ requirements-lock.txt     Tested exact dependency versions
 Makefile                  Common development commands
 .streamlit/config.toml   Streamlit settings and theme
 data/                     Local SQLite database (ignored by Git)
+run.ps1                   Windows startup helper
 ```
 
 ## Development commands
@@ -109,6 +111,9 @@ data/                     Local SQLite database (ignored by Git)
 | `make check` | Compile-check the application |
 | `make test` | Run helper tests |
 | `make clean` | Remove Python cache files |
+
+OTP request limits are process-local and reset when the app restarts. For
+multi-instance production deployments, use a shared rate-limit service.
 
 ## License and deployment
 

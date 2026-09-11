@@ -8,6 +8,8 @@ import logging
 import re
 import secrets
 import sqlite3
+import hmac
+import time
 from email.mime.text import MIMEText
 from pathlib import Path
 
@@ -24,6 +26,8 @@ TICKER_PATTERN = re.compile(r"^[A-Z0-9^.-]{1,20}$")
 OTP_EXPIRY_MINUTES = 5
 OTP_MAX_ATTEMPTS = 5
 OTP_RESEND_SECONDS = 60
+OTP_MAX_REQUESTS_PER_HOUR = 5
+OTP_REQUESTS = {}
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
@@ -56,6 +60,25 @@ def valid_email_address(email: str) -> bool:
 
 def valid_ticker(symbol: str) -> bool:
     return bool(TICKER_PATTERN.fullmatch(symbol.strip().upper()))
+
+
+def hash_otp(otp: str, key: str) -> str:
+    return hmac.new(
+        key.encode("utf-8"),
+        otp.encode("utf-8"),
+        "sha256",
+    ).hexdigest()
+
+
+def can_request_otp(email: str) -> bool:
+    now = time.monotonic()
+    recent = [sent_at for sent_at in OTP_REQUESTS.get(email, []) if now - sent_at < 3600]
+    if len(recent) >= OTP_MAX_REQUESTS_PER_HOUR:
+        OTP_REQUESTS[email] = recent
+        return False
+    recent.append(now)
+    OTP_REQUESTS[email] = recent
+    return True
 
 
 def init_database():
@@ -112,6 +135,8 @@ def init_auth_state():
         st.session_state.user_email = None
     if "otp_code" not in st.session_state:
         st.session_state.otp_code = None
+    if "otp_hash_key" not in st.session_state:
+        st.session_state.otp_hash_key = secrets.token_hex(32)
     if "otp_expires_at" not in st.session_state:
         st.session_state.otp_expires_at = None
     if "otp_attempts" not in st.session_state:
@@ -143,12 +168,14 @@ def show_auth_ui():
             < OTP_RESEND_SECONDS
         ):
             st.error(f"Please wait {OTP_RESEND_SECONDS} seconds before requesting another OTP.")
+        elif not can_request_otp(email):
+            st.error("OTP request limit reached. Please try again later.")
         else:
             otp = generate_otp()
             success, msg = send_otp_email(email, otp)
             if success:
                 st.success(msg)
-                st.session_state.otp_code = otp
+                st.session_state.otp_code = hash_otp(otp, st.session_state.otp_hash_key)
                 st.session_state.user_email = email
                 st.session_state.otp_expires_at = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
                 st.session_state.otp_attempts = 0
@@ -175,7 +202,10 @@ def show_auth_ui():
             st.error("OTP has expired. Please request a new one.")
             return
 
-        if otp_input.strip() == st.session_state.otp_code:
+        if hmac.compare_digest(
+            hash_otp(otp_input.strip(), st.session_state.otp_hash_key),
+            st.session_state.otp_code,
+        ):
             st.session_state.authenticated = True
             st.session_state.otp_code = None
             st.session_state.otp_expires_at = None
