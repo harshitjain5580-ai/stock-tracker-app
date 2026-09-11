@@ -3,11 +3,11 @@ import yfinance as yf
 import pandas as pd
 import mplfinance as mpf
 from datetime import datetime, timedelta
-import json
 import smtplib
-import hashlib
+import logging
 import re
 import secrets
+import sqlite3
 from email.mime.text import MIMEText
 from pathlib import Path
 
@@ -18,10 +18,15 @@ st.set_page_config(
     page_icon="📈"
 )
 
-WATCHLIST_DIR = Path("watchlists")
+DATABASE_PATH = Path("data") / "stock_tracker.db"
+MAX_WATCHLIST_SIZE = 50
+TICKER_PATTERN = re.compile(r"^[A-Z0-9^.-]{1,20}$")
 OTP_EXPIRY_MINUTES = 5
 OTP_MAX_ATTEMPTS = 5
 OTP_RESEND_SECONDS = 60
+
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
 
 # ===================== EMAIL / OTP HELPERS =====================
 
@@ -48,6 +53,25 @@ except (KeyError, FileNotFoundError, OSError, ValueError):
 def valid_email_address(email: str) -> bool:
     return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email))
 
+
+def valid_ticker(symbol: str) -> bool:
+    return bool(TICKER_PATTERN.fullmatch(symbol.strip().upper()))
+
+
+def init_database():
+    DATABASE_PATH.parent.mkdir(exist_ok=True)
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS watchlist (
+                email TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                PRIMARY KEY (email, symbol)
+            )
+            """
+        )
+
+
 def send_otp_email(to_email: str, otp: str):
     """Send OTP code to the user's email."""
     if not EMAIL_CONF or not EMAIL_USER or not EMAIL_PASSWORD:
@@ -72,6 +96,7 @@ def send_otp_email(to_email: str, otp: str):
             server.send_message(msg)
         return True, "OTP sent successfully! Please check your email."
     except (OSError, smtplib.SMTPException):
+        LOGGER.exception("OTP delivery failed")
         return False, "Unable to send the OTP right now. Check your email settings and try again."
 
 
@@ -179,35 +204,39 @@ def show_logout_button():
 
 # ===================== APP LOGIC (WATCHLIST / CHART) =====================
 
-def load_watchlist_from_file():
+def load_watchlist_from_database():
     user_email = st.session_state.get("user_email")
     if not user_email:
         return []
-    filename = hashlib.sha256(user_email.encode("utf-8")).hexdigest() + ".json"
-    watchlist_file = WATCHLIST_DIR / filename
-    if watchlist_file.exists():
-        try:
-            with watchlist_file.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                return [str(x).upper() for x in data]
-        except (OSError, json.JSONDecodeError) as exc:
-            st.warning(f"Unable to load your watchlist: {exc}")
-    return []
+    try:
+        init_database()
+        with sqlite3.connect(DATABASE_PATH) as connection:
+            rows = connection.execute(
+                "SELECT symbol FROM watchlist WHERE email = ? ORDER BY symbol",
+                (user_email,),
+            ).fetchall()
+        return [row[0] for row in rows]
+    except sqlite3.Error as exc:
+        LOGGER.exception("Watchlist load failed")
+        st.error(f"Unable to load your watchlist: {exc}")
+        return []
 
 
-def save_watchlist_to_file(watchlist):
+def save_watchlist_to_database(watchlist):
     user_email = st.session_state.get("user_email")
     if not user_email:
         st.error("You must be logged in to save a watchlist.")
         return
-    filename = hashlib.sha256(user_email.encode("utf-8")).hexdigest() + ".json"
-    watchlist_file = WATCHLIST_DIR / filename
     try:
-        WATCHLIST_DIR.mkdir(exist_ok=True)
-        with watchlist_file.open("w", encoding="utf-8") as f:
-            json.dump(watchlist, f)
-    except OSError as exc:
+        init_database()
+        with sqlite3.connect(DATABASE_PATH) as connection:
+            connection.execute("DELETE FROM watchlist WHERE email = ?", (user_email,))
+            connection.executemany(
+                "INSERT INTO watchlist (email, symbol) VALUES (?, ?)",
+                [(user_email, symbol) for symbol in watchlist],
+            )
+    except sqlite3.Error as exc:
+        LOGGER.exception("Watchlist save failed")
         st.error(f"Unable to save your watchlist: {exc}")
 
 
@@ -226,9 +255,9 @@ def normalize_ticker(symbol: str, region: str) -> str:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_history_data(ticker, period, interval):
     stock = yf.Ticker(ticker)
-    data = stock.history(period=period, interval=interval)
+    data = stock.history(period=period, interval=interval, timeout=15)
     if data.empty:
-        data = stock.history(period="1y", interval="1d")
+        data = stock.history(period="1y", interval="1d", timeout=15)
     return data
 
 
@@ -238,7 +267,7 @@ def fetch_history(ticker, period, interval):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_watchlist_data(ticker):
-    return yf.Ticker(ticker).history(period="2d", interval="1d")
+    return yf.Ticker(ticker).history(period="2d", interval="1d", timeout=15)
 
 
 def watchlist_ticker_candidates(symbol):
@@ -295,7 +324,7 @@ def approx_live_price(stock, data):
 def main_app():
     # --------- SESSION DEFAULTS ---------
     if "watchlist" not in st.session_state:
-        st.session_state.watchlist = load_watchlist_from_file()
+        st.session_state.watchlist = load_watchlist_from_database()
 
     # --------- SIDEBAR SETTINGS ---------
     st.sidebar.title("Global Stock Tracker")
@@ -307,6 +336,7 @@ def main_app():
     )
 
     region = "INDIA" if "India" in market else "USA"
+    init_database()
 
     timeframe = st.sidebar.radio(
         "Timeframe",
@@ -369,7 +399,7 @@ def main_app():
             try:
                 stock, data = fetch_history(ticker, current_period, current_interval)
                 if data.empty:
-                    st.error(f"'{ticker}' not found or no data.")
+                    st.error(f"'{ticker}' not found or no data for the selected timeframe.")
                     data = None
             except (OSError, ValueError, KeyError, TypeError):
                 st.error("Unable to retrieve market data right now. Please try again.")
@@ -394,6 +424,7 @@ def main_app():
                     f"({change:+.2f}, {percent:+.2f}%)"
                 )
                 st.write(hint_text)
+                st.caption(f"Data is supplied by Yahoo Finance and may be delayed. Last update: {data.index[-1]}")
 
                 if chart_type == "Line":
                     chart_df = pd.DataFrame({
@@ -464,17 +495,23 @@ def main_app():
         changed = False
 
         if add_click and new_sym.strip():
-            sym_up = new_sym.strip().upper()
-            if sym_up not in st.session_state.watchlist:
-                st.session_state.watchlist.append(sym_up)
-                changed = True
+            raw_symbol = new_sym.strip().upper()
+            if not valid_ticker(raw_symbol):
+                st.error("Use only letters, numbers, dots, hyphens, and ^ for a valid ticker.")
+            elif len(st.session_state.watchlist) >= MAX_WATCHLIST_SIZE:
+                st.error(f"Watchlists are limited to {MAX_WATCHLIST_SIZE} symbols.")
+            else:
+                sym_up = normalize_ticker(raw_symbol, region)
+                if sym_up not in st.session_state.watchlist:
+                    st.session_state.watchlist.append(sym_up)
+                    changed = True
 
         if clear_all and st.session_state.watchlist:
             st.session_state.watchlist = []
             changed = True
 
         if changed:
-            save_watchlist_to_file(st.session_state.watchlist)
+            save_watchlist_to_database(st.session_state.watchlist)
 
         if not st.session_state.watchlist:
             st.info("Watchlist is empty. Add some symbols above.")
@@ -518,7 +555,10 @@ def main_app():
             else:
                 st.warning("No data available for current watchlist symbols.")
 
-    st.caption("⚠ This app is for educational purposes only and is NOT financial advice. Always do your own research.")
+    st.caption(
+        "⚠ This app is for educational purposes only and is NOT financial advice. "
+        "Always do your own research."
+    )
 
 # ===================== ENTRY POINT =====================
 
@@ -557,4 +597,5 @@ try:
         else:
             main_app()
 except (OSError, ValueError, KeyError, TypeError):
+    LOGGER.exception("Unhandled application error")
     st.error("The application encountered an unexpected error. Please try again.")

@@ -55,7 +55,7 @@ On Windows, you can also run the app without `make`:
 
 ```powershell
 python -m py_compile app.py
-streamlit run app.py
+.\run.ps1
 ```
 
 ## Run the app
@@ -94,9 +94,10 @@ will display a configuration message.
 ```text
 app.py                    Streamlit application
 requirements.txt          Python dependencies
+requirements-lock.txt     Tested exact dependency versions
 Makefile                  Common development commands
 .streamlit/config.toml   Streamlit settings and theme
-watchlists/               Per-user local watchlist files (ignored by Git)
+data/                     Local SQLite database (ignored by Git)
 ```
 
 ## Development commands
@@ -106,6 +107,12 @@ watchlists/               Per-user local watchlist files (ignored by Git)
 | `make install` | Install Python dependencies |
 | `make run` | Start the Streamlit dashboard |
 | `make check` | Compile-check the application |
+| `make test` | Run helper tests |
 | `make clean` | Remove Python cache files |
 
+## License and deployment
 
+This project is licensed under the MIT License; see [LICENSE](LICENSE).
+The local SQLite database is suitable for development and single-instance
+deployments. Use managed persistent storage for multi-instance production
+deployments.
