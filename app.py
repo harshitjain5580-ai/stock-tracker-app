@@ -43,14 +43,14 @@ except:
 def send_otp_email(to_email: str, otp: str):
     """Send OTP code to the user's email."""
     if not EMAIL_CONF or not EMAIL_USER or not EMAIL_PASSWORD:
-            return False, "Email configuration not set up. Please configure email credentials in Streamlit Secrets."
+        return False, "Email configuration not set up. Please configure email credentials in Streamlit Secrets."
     subject = "Your OTP for Global Stock Tracker"
-        body = f"Your one-time password (OTP) is: {otp}\n\nIt is valid for 5 minutes."
+    body = f"Your one-time password (OTP) is: {otp}\n\nIt is valid for 5 minutes."
 
-                msg = MIMEText(body)
-            msg["Subject"] = subject
-            msg["From"] = EMAIL_USER
-            msg["To"] = to_email
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_USER
+    msg["To"] = to_email
 
     try:
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
@@ -460,34 +460,34 @@ try:
     
     
     # Show setup message if email credentials are not configured
-        if EMAIL_CONF is None:
-            st.error("⚠️ Email configuration not found!")
-            st.info("""
-            ### Setup Required
-            This app requires Gmail email configuration to send OTP codes for login.
-            
-            **Steps to configure:**
-            1. Go to your app's **Settings → Secrets**
-            2. Add the following TOML configuration:
-            
-            ```toml
-            [email]
-            email = "your-email@gmail.com"
-            user = "your-email@gmail.com"
-            password = "your-app-password"
-            smtp_server = "smtp.gmail.com"
-            smtp_port = 587
-            ```
-            
-            3. Replace with your actual Gmail address and **Gmail App Password** (not regular password)
-            4. Get your App Password from: [Google Account Settings](https://myaccount.google.com/apppasswords)
-            5. Click Save and the app will auto-refresh
-            """)
+    if EMAIL_CONF is None:
+        st.error("⚠️ Email configuration not found!")
+        st.info("""
+        ### Setup Required
+        This app requires Gmail email configuration to send OTP codes for login.
+
+        **Steps to configure:**
+        1. Go to your app's **Settings → Secrets**
+        2. Add the following TOML configuration:
+
+        ```toml
+        [email]
+        email = "your-email@gmail.com"
+        user = "your-email@gmail.com"
+        password = "your-app-password"
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 587
+        ```
+
+        3. Replace with your actual Gmail address and **Gmail App Password** (not regular password)
+        4. Get your App Password from: [Google Account Settings](https://myaccount.google.com/apppasswords)
+        5. Click Save and the app will auto-refresh
+        """)
+    else:
+        if not st.session_state.authenticated:
+            show_auth_ui()
         else:
-            if not st.session_state.authenticated:
-                show_auth_ui()
-            else:
-                main_app()
-                except Exception as e:
-                st.error(f"❌ App Error: {str(e)}")
-                st.info(f"Please contact support with this error: {type(e).__name__}: {str(e)}")
+            main_app()
+except Exception as e:
+    st.error(f"❌ App Error: {str(e)}")
+    st.info(f"Please contact support with this error: {type(e).__name__}: {str(e)}")
