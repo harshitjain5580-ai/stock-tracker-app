@@ -51,6 +51,13 @@ If `make` is not installed, run:
 python -m pip install -r requirements.txt
 ```
 
+On Windows, you can also run the app without `make`:
+
+```powershell
+python -m py_compile app.py
+streamlit run app.py
+```
+
 ## Run the app
 
 ```bash
@@ -77,7 +84,8 @@ smtp_server = "smtp.gmail.com"
 smtp_port = 465
 ```
 
-For Gmail, use an app password rather than your normal account password.
+Use port `465` for SSL (the default) or port `587` for STARTTLS. For Gmail,
+use an app password rather than your normal account password.
 Without this configuration, the dashboard can still be started, but OTP login
 will display a configuration message.
 
@@ -88,6 +96,7 @@ app.py                    Streamlit application
 requirements.txt          Python dependencies
 Makefile                  Common development commands
 .streamlit/config.toml   Streamlit settings and theme
+watchlists/               Per-user local watchlist files (ignored by Git)
 ```
 
 ## Development commands

@@ -4,10 +4,12 @@ import pandas as pd
 import mplfinance as mpf
 from datetime import datetime, timedelta
 import json
-import os
 import smtplib
+import hashlib
+import re
+import secrets
 from email.mime.text import MIMEText
-import random
+from pathlib import Path
 
 # ===================== STREAMLIT PAGE CONFIG =====================
 st.set_page_config(
@@ -16,7 +18,10 @@ st.set_page_config(
     page_icon="📈"
 )
 
-WATCHLIST_FILE = "watchlist.json"
+WATCHLIST_DIR = Path("watchlists")
+OTP_EXPIRY_MINUTES = 5
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_SECONDS = 60
 
 # ===================== EMAIL / OTP HELPERS =====================
 
@@ -25,20 +30,23 @@ EMAIL_CONF = None
 EMAIL_USER = None
 EMAIL_PASSWORD = None
 SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+SMTP_PORT = 465
 
 try:
     EMAIL_CONF = st.secrets["email"]
     EMAIL_USER = EMAIL_CONF.get("user")
     EMAIL_PASSWORD = EMAIL_CONF.get("password")
     SMTP_SERVER = EMAIL_CONF.get("smtp_server", "smtp.gmail.com")
-    SMTP_PORT = int(EMAIL_CONF.get("smtp_port", 587))
+    SMTP_PORT = int(EMAIL_CONF.get("smtp_port", 465))
     # Check if credentials are placeholder/invalid
     if EMAIL_USER and "your-" in EMAIL_USER.lower():
         EMAIL_CONF = None
-except:
-        pass
-        
+except (KeyError, FileNotFoundError, OSError, ValueError):
+    EMAIL_CONF = None
+
+
+def valid_email_address(email: str) -> bool:
+    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email))
 
 def send_otp_email(to_email: str, otp: str):
     """Send OTP code to the user's email."""
@@ -53,17 +61,23 @@ def send_otp_email(to_email: str, otp: str):
     msg["To"] = to_email
 
     try:
-        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+        if SMTP_PORT == 465:
+            server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, timeout=15)
+        else:
+            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=15)
+        with server:
+            if SMTP_PORT != 465:
+                server.starttls()
             server.login(EMAIL_USER, EMAIL_PASSWORD)
             server.send_message(msg)
         return True, "OTP sent successfully! Please check your email."
-    except Exception as e:
-        return False, f"Failed to send OTP: {e}"
+    except (OSError, smtplib.SMTPException):
+        return False, "Unable to send the OTP right now. Check your email settings and try again."
 
 
 def generate_otp():
     """Generate a 6-digit numeric OTP as a string."""
-    return f"{random.randint(100000, 999999)}"
+    return f"{secrets.randbelow(900000) + 100000}"
 
 
 def init_auth_state():
@@ -75,6 +89,10 @@ def init_auth_state():
         st.session_state.otp_code = None
     if "otp_expires_at" not in st.session_state:
         st.session_state.otp_expires_at = None
+    if "otp_attempts" not in st.session_state:
+        st.session_state.otp_attempts = 0
+    if "otp_sent_at" not in st.session_state:
+        st.session_state.otp_sent_at = None
 
 
 def show_auth_ui():
@@ -91,8 +109,15 @@ def show_auth_ui():
         pass
 
     if send_otp_btn:
-        if not email:
-            st.error("Please enter an email address.")
+        email = email.strip().lower()
+        if not valid_email_address(email):
+            st.error("Please enter a valid email address.")
+        elif (
+            st.session_state.otp_sent_at
+            and (datetime.now() - st.session_state.otp_sent_at).total_seconds()
+            < OTP_RESEND_SECONDS
+        ):
+            st.error(f"Please wait {OTP_RESEND_SECONDS} seconds before requesting another OTP.")
         else:
             otp = generate_otp()
             success, msg = send_otp_email(email, otp)
@@ -100,7 +125,9 @@ def show_auth_ui():
                 st.success(msg)
                 st.session_state.otp_code = otp
                 st.session_state.user_email = email
-                st.session_state.otp_expires_at = datetime.now() + timedelta(minutes=5)
+                st.session_state.otp_expires_at = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+                st.session_state.otp_attempts = 0
+                st.session_state.otp_sent_at = datetime.now()
             else:
                 st.error(msg)
 
@@ -119,13 +146,23 @@ def show_auth_ui():
             return
 
         if datetime.now() > st.session_state.otp_expires_at:
+            st.session_state.otp_code = None
             st.error("OTP has expired. Please request a new one.")
             return
 
         if otp_input.strip() == st.session_state.otp_code:
             st.session_state.authenticated = True
+            st.session_state.otp_code = None
+            st.session_state.otp_expires_at = None
+            st.session_state.otp_attempts = 0
             st.success("OTP verified! You are now logged in.")
         else:
+            st.session_state.otp_attempts += 1
+            if st.session_state.otp_attempts >= OTP_MAX_ATTEMPTS:
+                st.session_state.otp_code = None
+                st.session_state.otp_expires_at = None
+                st.error("Too many incorrect attempts. Please request a new OTP.")
+                return
             st.error("Incorrect OTP. Please try again.")
 
 
@@ -138,28 +175,40 @@ def show_logout_button():
                 st.session_state.user_email = None
                 st.session_state.otp_code = None
                 st.session_state.otp_expires_at = None
-                st.experimental_rerun()
+                st.rerun()
 
 # ===================== APP LOGIC (WATCHLIST / CHART) =====================
 
 def load_watchlist_from_file():
-    if os.path.exists(WATCHLIST_FILE):
+    user_email = st.session_state.get("user_email")
+    if not user_email:
+        return []
+    filename = hashlib.sha256(user_email.encode("utf-8")).hexdigest() + ".json"
+    watchlist_file = WATCHLIST_DIR / filename
+    if watchlist_file.exists():
         try:
-            with open(WATCHLIST_FILE, "r", encoding="utf-8") as f:
+            with watchlist_file.open("r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
                 return [str(x).upper() for x in data]
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            st.warning(f"Unable to load your watchlist: {exc}")
     return []
 
 
 def save_watchlist_to_file(watchlist):
+    user_email = st.session_state.get("user_email")
+    if not user_email:
+        st.error("You must be logged in to save a watchlist.")
+        return
+    filename = hashlib.sha256(user_email.encode("utf-8")).hexdigest() + ".json"
+    watchlist_file = WATCHLIST_DIR / filename
     try:
-        with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
+        WATCHLIST_DIR.mkdir(exist_ok=True)
+        with watchlist_file.open("w", encoding="utf-8") as f:
             json.dump(watchlist, f)
-    except Exception:
-        pass
+    except OSError as exc:
+        st.error(f"Unable to save your watchlist: {exc}")
 
 
 def normalize_ticker(symbol: str, region: str) -> str:
@@ -174,12 +223,29 @@ def normalize_ticker(symbol: str, region: str) -> str:
     return up
 
 
-def fetch_history(ticker, period, interval):
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_history_data(ticker, period, interval):
     stock = yf.Ticker(ticker)
     data = stock.history(period=period, interval=interval)
     if data.empty:
         data = stock.history(period="1y", interval="1d")
-    return stock, data
+    return data
+
+
+def fetch_history(ticker, period, interval):
+    return yf.Ticker(ticker), fetch_history_data(ticker, period, interval)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_watchlist_data(ticker):
+    return yf.Ticker(ticker).history(period="2d", interval="1d")
+
+
+def watchlist_ticker_candidates(symbol):
+    symbol = symbol.strip().upper()
+    if symbol.startswith("^") or symbol.endswith((".NS", ".BO")):
+        return [symbol]
+    return [symbol, f"{symbol}.NS", f"{symbol}.BO"]
 
 
 def moving_average_hint(data, price):
@@ -219,7 +285,7 @@ def approx_live_price(stock, data):
     try:
         fi = stock.fast_info
         live_price = fi.last_price
-    except Exception:
+    except (AttributeError, KeyError, TypeError, ValueError, OSError):
         live_price = None
     if live_price is None:
         live_price = float(data["Close"].iloc[-1])
@@ -305,15 +371,15 @@ def main_app():
                 if data.empty:
                     st.error(f"'{ticker}' not found or no data.")
                     data = None
-            except Exception as e:
-                st.error(str(e))
+            except (OSError, ValueError, KeyError, TypeError):
+                st.error("Unable to retrieve market data right now. Please try again.")
                 data = None
 
             if data is not None and not data.empty:
                 live_price = approx_live_price(stock, data)
                 old_price = float(data["Close"].iloc[0])
                 change = live_price - old_price
-                percent = (change / old_price) * 100
+                percent = (change / old_price) * 100 if old_price != 0 else 0.0
 
                 hint_text, ma20, ma50 = moving_average_hint(data, live_price)
 
@@ -368,7 +434,7 @@ def main_app():
                 with st.expander("More info"):
                     try:
                         info = stock.get_info()
-                    except Exception:
+                    except (OSError, ValueError, KeyError, TypeError):
                         info = {}
                     st.write({
                         "Symbol": display_symbol,
@@ -414,32 +480,34 @@ def main_app():
             st.info("Watchlist is empty. Add some symbols above.")
         else:
             if st.button("Refresh Watchlist Prices"):
-                st.session_state["watch_refresh"] = datetime.now().isoformat()
+                fetch_watchlist_data.clear()
 
             st.write("### Current Watchlist")
 
             rows = []
-            end = datetime.now()
-            start = end - timedelta(days=2)
-
             for sym in st.session_state.watchlist:
+                hist = pd.DataFrame()
+                resolved_symbol = sym
+                for candidate in watchlist_ticker_candidates(sym):
+                    try:
+                        hist = fetch_watchlist_data(candidate)
+                    except (OSError, ValueError):
+                        hist = pd.DataFrame()
+                    if not hist.empty:
+                        resolved_symbol = candidate
+                        break
                 try:
-                    stock = yf.Ticker(sym)
-                    hist = stock.history(start=start, end=end)
-                    if hist.empty:
-                        stock = yf.Ticker(sym + ".NS")
-                        hist = stock.history(start=start, end=end)
                     if hist.empty or len(hist) < 1:
                         continue
                     last = float(hist["Close"].iloc[-1])
                     if len(hist) >= 2:
                         prev = float(hist["Close"].iloc[0])
-                        pct = (last - prev) / prev * 100
+                        pct = (last - prev) / prev * 100 if prev != 0 else 0.0
                     else:
                         pct = 0.0
-                    rows.append((sym, last, pct))
-                except Exception:
-                    continue
+                    rows.append((resolved_symbol, last, pct))
+                except (KeyError, TypeError, ValueError):
+                    st.warning(f"Unable to calculate a price for {sym}.")
 
             if rows:
                 df_watch = pd.DataFrame(rows, columns=["Symbol", "Last Price", "% Change"])
@@ -476,7 +544,7 @@ try:
         user = "your-email@gmail.com"
         password = "your-app-password"
         smtp_server = "smtp.gmail.com"
-        smtp_port = 587
+        smtp_port = 465
         ```
 
         3. Replace with your actual Gmail address and **Gmail App Password** (not regular password)
@@ -488,6 +556,5 @@ try:
             show_auth_ui()
         else:
             main_app()
-except Exception as e:
-    st.error(f"❌ App Error: {str(e)}")
-    st.info(f"Please contact support with this error: {type(e).__name__}: {str(e)}")
+except (OSError, ValueError, KeyError, TypeError):
+    st.error("The application encountered an unexpected error. Please try again.")
